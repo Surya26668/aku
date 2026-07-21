@@ -1,82 +1,102 @@
-const express = require('express');
-const axios = require('axios');
-const { google } = require('googleapis');
+// Token Bot Telegram Anda
+var TOKEN = "7995283596:AAG9jfaG5vTTyUBMokaDVaNpXTG6-NZWOU4";
 
-const app = express();
-app.use(express.json());
+// ID Spreadsheet asli Anda yang sudah diverifikasi
+var SPREADSHEET_ID = "19BJ7FDUtKEaP8Y_jGsPBqhA5LVGmmINKxzQR3sat-2I";
 
-const PORT = process.env.PORT || 3000;
-const TOKEN = process.env.TELEGRAM_TOKEN;
-const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-
-// Inisialisasi Google Sheets API menggunakan Service Account
-const auth = new google.auth.GoogleAuth({
-  keyFile: 'credentials.json', // File JSON dari Google Cloud Console
-  scopes: ['https://googleapis.com'],
-});
-
-app.post('/webhook', async (req, res) => {
+function doPost(e) {
   try {
-    const update = req.body;
-    if (!update.message) return res.sendStatus(200);
+    // 1. Membaca data masuk dari webhook Telegram
+    var update = JSON.parse(e.postData.contents);
+    if (!update.message) return HtmlService.createHtmlOutput("No Message");
 
-    const msg = update.message;
-    const chatId = msg.chat.id;
-    const username = msg.from.first_name + (msg.from.last_name ? " " + msg.from.last_name : "");
-    const date = new Date(msg.date * 1000).toISOString();
+    var msg = update.message;
+    var chatId = msg.chat.id;
     
-    let dataType = "Teks";
-    let dataContent = "";
+    // Menggabungkan nama depan dan nama belakang user jika ada
+    var username = msg.from.first_name + (msg.from.last_name ? " " + msg.from.last_name : "");
+    
+    // Konversi waktu dari Telegram timestamp ke format waktu lokal
+    var date = new Date(msg.date * 1000);
+    
+    var dataType = "Lainnya";
+    var dataContent = "";
 
+    // 2. Logika Deteksi Multi-Media (Teks, Foto, Video, File, Audio, Voice, Stiker)
     if (msg.text) {
       dataType = "Teks";
       dataContent = msg.text;
-    } else if (msg.photo) {
+    } 
+    else if (msg.photo) {
       dataType = "Foto";
-      const fileId = msg.photo[msg.photo.length - 1].file_id;
-      dataContent = await getTelegramFileLink(fileId);
-    } else if (msg.document) {
+      var fileId = msg.photo[msg.photo.length - 1].file_id; // Mengambil resolusi tertinggi
+      dataContent = getTelegramFileLink(fileId);
+    } 
+    else if (msg.video) {
+      dataType = "Video";
+      var fileId = msg.video.file_id;
+      dataContent = getTelegramFileLink(fileId);
+    }
+    else if (msg.document) {
       dataType = "Dokumen";
-      const fileId = msg.document.file_id;
-      dataContent = await getTelegramFileLink(fileId);
-    } else {
-      dataType = "Lainnya";
-      dataContent = "Jenis data tidak didukung.";
+      var fileId = msg.document.file_id;
+      dataContent = getTelegramFileLink(fileId);
+    } 
+    else if (msg.audio) {
+      dataType = "Audio";
+      var fileId = msg.audio.file_id;
+      dataContent = getTelegramFileLink(fileId);
+    }
+    else if (msg.voice) {
+      dataType = "Voice Note";
+      var fileId = msg.voice.file_id;
+      dataContent = getTelegramFileLink(fileId);
+    }
+    else if (msg.sticker) {
+      dataType = "Stiker";
+      var fileId = msg.sticker.file_id;
+      dataContent = getTelegramFileLink(fileId);
+    }
+    else {
+      dataType = "Tidak Diketahui";
+      dataContent = "Jenis media belum didukung oleh sistem.";
     }
 
-    // Simpan ke Google Sheets via REST API
-    const sheets = google.sheets({ version: 'v4', auth });
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID,
-      range: 'Sheet1!A:E', // Sesuaikan nama sheet Anda
-      valueInputOption: 'USER_ENTERED',
-      resource: {
-        values: [[date, chatId, username, dataType, dataContent]],
-      },
-    });
+    // 3. Memasukkan data ke dalam baris Google Sheets secara spesifik berdasarkan ID
+    var sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getActiveSheet();
+    sheet.appendRow([date, chatId, username, dataType, dataContent]);
 
-    // Kirim balasan ke Telegram
-    await sendTelegramMessage(chatId, `✅ Data berjenis [${dataType}] berhasil diterima dan disimpan!`);
+    // 4. Mengirimkan pesan balasan otomatis kembali ke pengguna Telegram
+    sendTelegramMessage(chatId, "✅ Data berjenis [" + dataType + "] berhasil diterima dan disimpan!");
 
-    res.sendStatus(200);
   } catch (error) {
-    console.error(error);
-    res.sendStatus(500);
+    Logger.log(error.toString());
   }
-});
+}
 
-async function getTelegramFileLink(fileId) {
-  const url = `https://telegram.org{TOKEN}/getFile?file_id=${fileId}`;
-  const response = await axios.get(url);
-  if (response.data.ok) {
-    return `https://telegram.org{TOKEN}/${response.data.result.file_path}`;
+// Fungsi untuk meminta path file asli ke server API Telegram
+function getTelegramFileLink(fileId) {
+  var url = "https://api.telegram.org/bot" + TOKEN + "/getFile?file_id=" + fileId;
+  var response = UrlFetchApp.fetch(url);
+  var json = JSON.parse(response.getContentText());
+  if (json.ok) {
+    // Menghasilkan link download publik langsung yang siap diklik di Google Sheets
+    return "https://telegram.org" + TOKEN + "/" + json.result.file_path;
   }
   return "Gagal mengambil link file";
 }
 
-async function sendTelegramMessage(chatId, text) {
-  const url = `https://telegram.org{TOKEN}/sendMessage`;
-  await axios.post(url, { chat_id: chatId, text: text });
+// Fungsi untuk mengirim balik respons teks ke obrolan Telegram
+function sendTelegramMessage(chatId, text) {
+  var url = "https://api.telegram.org/bot" + TOKEN + "/sendMessage";
+  var payload = {
+    "chat_id": chatId,
+    "text": text
+  };
+  var options = {
+    "method": "post",
+    "contentType": "application/json",
+    "payload": JSON.stringify(payload)
+  };
+  UrlFetchApp.fetch(url, options);
 }
-
-app.listen(PORT, () => console.log(`Server berjalan di port ${PORT}`));
