@@ -1,0 +1,20 @@
+FROM nginx:alpine
+
+# Konfigurasi instan untuk meneruskan semua data masuk ke Google Sheets Anda
+RUN echo 'server { \
+    listen 80; \
+    location /webhook { \
+        proxy_pass URL_WEB_APP_GOOGLE_APPS_SCRIPT_ANDA; \
+        proxy_set_header Host ://google.com; \
+        proxy_set_header X-Real-IP $remote_addr; \
+        proxy_intercept_errors on; \
+        error_page 301 302 307 = @handle_redirect; \
+    } \
+    location @handle_redirect { \
+        set $saved_redirect_location $upstream_http_location; \
+        proxy_pass $saved_redirect_location; \
+    } \
+}' > /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
